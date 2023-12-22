@@ -1,66 +1,29 @@
-## Foundry
+# <h1 align="center"> Lottery Contract </h1>
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+![Github Actions](https://github.com/freezyex/LotteryContract-Foundry/workflows/test/badge.svg)
+[![Foundry][foundry-badge]][foundry]
 
-Foundry consists of:
+[foundry]: https://getfoundry.sh/
+[foundry-badge]: https://img.shields.io/badge/Built%20with-Foundry-FFDB1C.svg
+## DISCLAIMER
+_This is my first time I use Foundry, so it is very likely that many things can be improved.  
+These smart contracts are being provided as is. They have not been audited and as such there can be no assurance they will work as intended, and users may experience delays, failures, errors, omissions, loss of transmitted information or loss of funds. The creators are not liable for any of the foregoing. Users should proceed with caution and use at their own risk.
+Feel free to contribute to the repo!_
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## How does it work?
+The contract uses a PRNG function to pick a winner from an array of players, as VRF wasn't necessary for the purpose of this project.  
+To gurantee a 100% fairness, the admin must compute the [Keccak256](https://emn178.github.io/online-tools/keccak_256.html) hash of a random string off-chain and set it at the creation of each lottery. 
+Once the hash for that lottery is set, it can't be changed. To provide more randomness, the admin can call the ``pickWinner()`` whenever he wants.
+ 
 
-## Documentation
+## Getting Started
 
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
+```sh
+forge init
+forge build
+forge test
 ```
 
-### Test
+## Development
 
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+This project uses [Foundry](https://getfoundry.sh). See the [book](https://book.getfoundry.sh/getting-started/installation.html) for instructions on how to install and use Foundry.

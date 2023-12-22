@@ -2,13 +2,9 @@
 
 pragma solidity ^0.8.13;
 
-/// @title Lottery contract
-/// @author FreezyEx ( https://github.com/FreezyEx )
-/// @notice This contract is a lottery game based on PRNG. 
-///         The admin have to generate a random string and hash it offchain for each lottery.
-///         This hash is set at ther start of the lottery to guarantee a fair game.
-///         To be able to pick a winner, the admin must provide the random string to the contract to
-///         prove the fairness of the game.
+import {VRFCoordinatorV2Interface} from "lib/chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
+import {VRFv2Consumer} from "./VRFv2Consumer.sol";
+import {console} from "lib/forge-std/src/Script.sol";
 
 contract Lottery {
 
@@ -17,20 +13,27 @@ contract Lottery {
     
     mapping(address => bool) public isAdmin;
 
-    struct LotteryInfo {
-        uint256 price;
-        uint256 numOfTickets;
-        uint256 maxNumOfTickets;
-        bytes32 randomHash;
-    }
 
     address[] players;
 
     address public feeRecipient;
     address public manager;
-    uint256 public immutable FEE;
     uint256 public lotteryId;
     uint256 public totalPayout;
+    uint256 public lotteryPeriod = 24 hours;
+    uint256 public ticketPrice;
+    uint256 public feePercentage;
+    address public consumer;
+    address public COORDINATOR;
+    uint64 public subscriptionId;
+
+    struct LotteryInfo {
+        uint256 price;
+        uint256 numOfTickets;
+        uint256 maxNumOfTickets;
+        bytes32 randomHash;
+        uint256 startTime;
+    }
 
     modifier isManager() {
         require(msg.sender == manager);
@@ -40,13 +43,19 @@ contract Lottery {
     event LotteryCreated(uint256 lotteryId, uint256 price, uint256 maxNumOfTickets);
     event TicketsBought(address player, uint256 numOfTicket);
     event WinnerPicked(uint256 lotteryId, address indexed winner, uint256 payout);
+    event UpdateLotteryPeriod(uint256 oldPeriod, uint256 newPeriod);
+    event UpdateTicketPrice(uint256 oldPrice, uint256 newPrice);
+    event UpdateFeePercentage(uint256 oldPercentage, uint256 newPercentage);
+    event CreateSubId(uint64 id);
 
-    constructor(address _feeRecipient) {
+    constructor(address _feeRecipient, address _cordinator) {
         isAdmin[msg.sender] = true;
         manager = msg.sender;
         feeRecipient = _feeRecipient;
-        FEE = 20;
         lotteryId = 1;
+        ticketPrice = 1000000000000000000;
+        feePercentage = 2000;
+        COORDINATOR = _cordinator;
     }
 
     function sendBNB(address payable recipient, uint256 amount) internal {
@@ -58,22 +67,22 @@ contract Lottery {
 
     /// @notice Create a new lottery
     /// @param randomHash The hash of a random string (you can use https://emn178.github.io/online-tools/keccak_256.html )
-    /// @param ticketPrice The price of a ticket
     /// @param maxNumOfTickets The maximum number of tickets that can be bought
-    function startLottery(bytes32 randomHash, uint256 ticketPrice, uint256 maxNumOfTickets) external {
+    function startLottery(bytes32 randomHash, uint256 maxNumOfTickets) external {
         require(isAdmin[msg.sender], "You are not authorized to start a lottery");
         require(lotteryInfo[lotteryId].numOfTickets == 0, "Lottery already started");
-        require(ticketPrice > 0, "Ticket price must be greater than 0");
         require(maxNumOfTickets > 0, "Max number of tickets must be greater than 0");
-        require(feeRecipient != address(0), "Fee recipient must be set");
+        require(ticketPrice > 0, "Ticket Price is not setted");
+        require(feeRecipient != address(0), "Fee recipient must be setted");
         require(randomHash != 0, "Winner hash must be set");
-        lotteryInfo[lotteryId] = LotteryInfo(ticketPrice, 0, maxNumOfTickets, randomHash);
+        lotteryInfo[lotteryId] = LotteryInfo(ticketPrice, 0, maxNumOfTickets, randomHash, block.timestamp);
         emit LotteryCreated(lotteryId, ticketPrice, maxNumOfTickets);
     }
 
     /// @notice Buy tickets for the current lottery
     /// @param ticketsNumber The number of tickets to buy
     function buyTicket(uint256 ticketsNumber) external payable {
+        require(lotteryInfo[lotteryId].startTime + lotteryPeriod > block.timestamp, "Lottery is closed");
         require(msg.sender.code.length == 0, "Address must be a EOA");
         require(lotteryInfo[lotteryId].maxNumOfTickets > 0, "Lottery not started");
         require(ticketsNumber > 0, "Number of tickets must be greater than 0");
@@ -97,9 +106,9 @@ contract Lottery {
         require(lotteryInfo[lotteryId].numOfTickets > 0, "No winner to pick");
         require(lotteryInfo[lotteryId].randomHash ==  keccak256(abi.encodePacked(seed)), "Seed is not correct");
         require(lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets <= address(this).balance, "Missing funds");
-        uint256 winnerIndex = random(seed) % players.length;
+        uint256 winnerIndex = randomNumGenerator() % players.length;
         uint256 payout = lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets;
-        uint256 feeAmount = payout * FEE / 100;
+        uint256 feeAmount = payout * feePercentage / 10000;
         lotteryWinner[lotteryId] = players[winnerIndex];
         totalPayout += (payout - feeAmount);
         players = new address[](0);
@@ -107,6 +116,34 @@ contract Lottery {
         sendBNB(payable(feeRecipient), feeAmount);
         emit WinnerPicked(lotteryId, lotteryWinner[lotteryId], payout - feeAmount);
         lotteryId++;
+    }
+
+    function createSubscriptionID() external isManager returns(uint64 subId) {
+        subId = VRFCoordinatorV2Interface(COORDINATOR).createSubscription();
+        subscriptionId = subId;
+        emit CreateSubId(subId);
+    }
+
+    function addConsumer() external isManager {
+        VRFCoordinatorV2Interface(COORDINATOR).addConsumer(subscriptionId, consumer);
+    }
+
+    function randomNumGenerator() public returns (uint256) {
+        require(consumer != address(0), "consumer is not setted");
+        return VRFv2Consumer(consumer).requestRandomWords();
+    }
+
+    // This functions returns the random number given to us by chainlink
+    function randomWordGenerator() public view returns (uint256) {
+        //    uint256 requestID = getRequestId();
+        uint256 requestID = VRFv2Consumer(consumer).lastRequestId();
+        // Get random words array
+        (, uint256[] memory randomWords) = VRFv2Consumer(consumer).getRequestStatus(
+            requestID
+        );
+
+        // return first random word
+        return randomWords[0];
     }
 
     function random(string calldata seed) internal view returns(uint256){
@@ -117,8 +154,27 @@ contract Lottery {
         manager = _manager;
     }
 
+    function setLotteryPeriod(uint256 newtime) external isManager {
+        emit UpdateLotteryPeriod(lotteryPeriod, newtime);
+        lotteryPeriod = newtime;
+    }
+
     function setAdmin(address _admin, bool _isAdmin) external isManager {
         isAdmin[_admin] = _isAdmin;
+    }
+
+    function setTickeyPrice(uint256 _price) external isManager {
+        emit UpdateTicketPrice(ticketPrice, _price);
+        ticketPrice = _price;
+    }
+
+    function setFeePercentage(uint256 _newPercentage) external isManager {
+        emit UpdateFeePercentage(feePercentage, _newPercentage);
+        feePercentage = _newPercentage;
+    }
+
+    function setVRFConsumer(address _consumer) external isManager {
+        consumer = _consumer;
     }
 
     function getPlayers() external view returns(address[] memory){
