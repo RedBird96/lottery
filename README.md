@@ -20,3 +20,9 @@ forge test
 ```sh
 forge script LotteryScript -s "deployTest()" --force --broadcast --verify
 ```
+
+## Upgrade
+
+```sh
+forge script LotteryScript -s "upgradeTest()" --force --broadcast --verify
+```

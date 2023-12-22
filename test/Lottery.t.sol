@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
+import {ERC1967Proxy} from "lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Script, console} from "lib/forge-std/src/Script.sol";
 import {Test} from "lib/forge-std/src/Test.sol";
 import {Lottery} from "../src/Lottery.sol";
@@ -11,10 +12,10 @@ contract LotteryTest is Test {
     VRFv2Consumer public consumer;
 
     // Actors
-    address manager = address(0x59cb61E9c2dF95500c68B91D329f7481F0427D41);
-    address user1 = address(1);
-    address user2 = address(2);
-    address feeReceiver = address(3);
+    address public manager = address(0x2ef73f60F33b167dC018C6B1DCC957F4e4c7e936);
+    address public user1 = address(1);
+    address public user2 = address(2);
+    address public feeReceiver = address(3);
 
     event LotteryCreated(uint256 lotteryId, uint256 maxNumOfTickets);
     event TicketsBought(address player, uint256 numOfTicket);
@@ -22,7 +23,21 @@ contract LotteryTest is Test {
     function setUp() public {
         vm.createSelectFork("https://eth-sepolia.g.alchemy.com/v2/gugiiHEtV3akg3p4Y8y0kYFHT4Fe6nND", 4936679);
         vm.startPrank(manager);
-        lottery = new Lottery(address(feeReceiver), address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625));
+
+        address implementation = address(new Lottery());
+
+        bytes memory data = abi.encodeCall(
+            Lottery.__Lottery_init, 
+            (
+                address(feeReceiver), 
+                address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625)
+            )
+        );
+        address proxy = address(new ERC1967Proxy(implementation, data));
+
+        lottery = Lottery(proxy);
+
+        // lottery = new Lottery(address(feeReceiver), address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625));
         uint64 subId = lottery.createSubscriptionID();
         consumer = new VRFv2Consumer(subId, address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625), address(lottery));
         lottery.setVRFConsumer(address(consumer));
@@ -118,7 +133,7 @@ contract LotteryTest is Test {
         lottery.buyTicket{value: 1 * 1}(1);
     }
 
-    function testPickWinner() public {
+    function testPickWinnerBeforeClosed() public {
         vm.prank(manager);
         lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
         uint256 price = lottery.ticketPrice();
@@ -129,8 +144,29 @@ contract LotteryTest is Test {
             lottery.buyTicket{value: price}(1);
         }
         assertEq(lottery.getLotteryInfo(1).numOfTickets, 10);
+
+        vm.prank(manager);
+        vm.expectRevert(bytes("Lottery is not closed"));
+        lottery.pickWinner("ciao");
+
+    }
+
+    function testPickWinner() public {
+        vm.prank(manager);
+        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        uint256 snapshot = block.timestamp;
+        uint256 price = lottery.ticketPrice();
+        for(uint i = 0; i < 10; i++) {
+            address player = vm.addr(i+1);
+            vm.deal(player, 1 ether);
+            vm.prank(player);
+            lottery.buyTicket{value: price}(1);
+        }
+        assertEq(lottery.getLotteryInfo(1).numOfTickets, 10);
         uint256 feeReceiverBefore = feeReceiver.balance;
 
+        snapshot = snapshot + lottery.lotteryPeriod() + 1;
+        vm.warp(snapshot);
         vm.prank(manager);
         lottery.pickWinner("ciao");
 
@@ -141,17 +177,27 @@ contract LotteryTest is Test {
         assertEq(feeReceiverAfter, feeReceiverBefore + feeAmount);
         assertEq(lottery.getPlayers().length, 0);
         assertEq(lottery.getLotteryWinnerById(1).balance, 8 ether);   
+
+        address player1 = vm.addr(12);
+        vm.deal(player1, 1 ether);
+        vm.prank(player1);
+        vm.expectRevert(bytes("Lottery is closed"));
+        lottery.buyTicket{value: price}(1);
+
     }
 
     function testCannotPickWinnerWithWrongSeed() public {
         vm.prank(manager);
         lottery.startLottery(keccak256(abi.encodePacked("pippo")), 10);
+        uint256 snapshot = block.timestamp;
         for(uint i = 0; i < 10; i++) {
             address player = vm.addr(i+1);
             vm.deal(player, 1 ether);
             vm.prank(player);
             lottery.buyTicket{value: 1 ether}(1);
         }
+        snapshot = snapshot + lottery.lotteryPeriod() + 1;
+        vm.warp(snapshot);
         vm.prank(manager);
         vm.expectRevert(bytes("Seed is not correct"));
         lottery.pickWinner("ciao");
@@ -160,6 +206,9 @@ contract LotteryTest is Test {
     function testCannotPickWinnerWithNoPlayers() public {
         vm.prank(manager);
         lottery.startLottery(keccak256(abi.encodePacked("pippo")), 10);
+        uint256 snapshot = block.timestamp;
+        snapshot = snapshot + lottery.lotteryPeriod() + 1;
+        vm.warp(snapshot);
         vm.expectRevert(bytes("No winner to pick"));
         vm.prank(manager);
         lottery.pickWinner("ciao");

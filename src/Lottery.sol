@@ -2,30 +2,45 @@
 
 pragma solidity ^0.8.13;
 
+import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
+import {ReentrancyGuardUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/security/ReentrancyGuardUpgradeable.sol";
 import {VRFCoordinatorV2Interface} from "lib/chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
 import {VRFv2Consumer} from "./VRFv2Consumer.sol";
 import {console} from "lib/forge-std/src/Script.sol";
 
-contract Lottery {
+contract Lottery is 
+    Initializable , 
+    UUPSUpgradeable, 
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable 
+{
 
-    mapping(uint256 => address) lotteryWinner;
-    mapping(uint256 => LotteryInfo) lotteryInfo;
+    mapping(uint256 => address) public lotteryWinner;
+    mapping(uint256 => LotteryInfo) public lotteryInfo;
     
     mapping(address => bool) public isAdmin;
 
 
-    address[] players;
+    address[] public players;
 
     address public feeRecipient;
     address public manager;
     uint256 public lotteryId;
     uint256 public totalPayout;
-    uint256 public lotteryPeriod = 24 hours;
+    uint256 public lotteryPeriod;
     uint256 public ticketPrice;
     uint256 public feePercentage;
     address public consumer;
     address public COORDINATOR;
     uint64 public subscriptionId;
+    uint256 public test;
+
+    enum LotteryStatus {
+        OPENED,
+        CLOSED
+    }
 
     struct LotteryInfo {
         uint256 price;
@@ -33,7 +48,9 @@ contract Lottery {
         uint256 maxNumOfTickets;
         bytes32 randomHash;
         uint256 startTime;
+        LotteryStatus status;
     }
+
 
     modifier isManager() {
         require(msg.sender == manager);
@@ -48,7 +65,10 @@ contract Lottery {
     event UpdateFeePercentage(uint256 oldPercentage, uint256 newPercentage);
     event CreateSubId(uint64 id);
 
-    constructor(address _feeRecipient, address _cordinator) {
+    function __Lottery_init(
+        address _feeRecipient,
+        address _cordinator  
+    ) public initializer {
         isAdmin[msg.sender] = true;
         manager = msg.sender;
         feeRecipient = _feeRecipient;
@@ -56,7 +76,16 @@ contract Lottery {
         ticketPrice = 1000000000000000000;
         feePercentage = 2000;
         COORDINATOR = _cordinator;
+        lotteryPeriod = 24 hours;
+        test = 120;
+
+        __Ownable_init();
+        __UUPSUpgradeable_init();
     }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyOwner {}
 
     function sendBNB(address payable recipient, uint256 amount) internal {
         require(address(this).balance >= amount, "Address: insufficient balance");
@@ -75,14 +104,17 @@ contract Lottery {
         require(ticketPrice > 0, "Ticket Price is not setted");
         require(feeRecipient != address(0), "Fee recipient must be setted");
         require(randomHash != 0, "Winner hash must be set");
-        lotteryInfo[lotteryId] = LotteryInfo(ticketPrice, 0, maxNumOfTickets, randomHash, block.timestamp);
+        lotteryInfo[lotteryId] = LotteryInfo(ticketPrice, 0, maxNumOfTickets, randomHash, block.timestamp, LotteryStatus.OPENED);
         emit LotteryCreated(lotteryId, ticketPrice, maxNumOfTickets);
     }
 
     /// @notice Buy tickets for the current lottery
     /// @param ticketsNumber The number of tickets to buy
     function buyTicket(uint256 ticketsNumber) external payable {
-        require(lotteryInfo[lotteryId].startTime + lotteryPeriod > block.timestamp, "Lottery is closed");
+        require(
+            lotteryInfo[lotteryId].startTime + lotteryPeriod > block.timestamp && 
+            lotteryInfo[lotteryId].status == LotteryStatus.OPENED
+            ,"Lottery is closed");
         require(msg.sender.code.length == 0, "Address must be a EOA");
         require(lotteryInfo[lotteryId].maxNumOfTickets > 0, "Lottery not started");
         require(ticketsNumber > 0, "Number of tickets must be greater than 0");
@@ -103,6 +135,10 @@ contract Lottery {
     /// @dev VRF is is not necessary since the extraction is handled by the staff
     function pickWinner(string calldata seed) external{
         require(isAdmin[msg.sender] == true, "You are not admin");
+        require(
+            lotteryInfo[lotteryId].status == LotteryStatus.OPENED && 
+            lotteryInfo[lotteryId].startTime + lotteryPeriod < block.timestamp
+            , "Lottery is not closed");
         require(lotteryInfo[lotteryId].numOfTickets > 0, "No winner to pick");
         require(lotteryInfo[lotteryId].randomHash ==  keccak256(abi.encodePacked(seed)), "Seed is not correct");
         require(lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets <= address(this).balance, "Missing funds");
@@ -114,6 +150,7 @@ contract Lottery {
         players = new address[](0);
         sendBNB(payable(lotteryWinner[lotteryId]), payout - feeAmount);
         sendBNB(payable(feeRecipient), feeAmount);
+        lotteryInfo[lotteryId].status = LotteryStatus.CLOSED;
         emit WinnerPicked(lotteryId, lotteryWinner[lotteryId], payout - feeAmount);
         lotteryId++;
     }
@@ -144,10 +181,6 @@ contract Lottery {
 
         // return first random word
         return randomWords[0];
-    }
-
-    function random(string calldata seed) internal view returns(uint256){
-        return uint256(keccak256(abi.encodePacked(block.difficulty, block.timestamp, seed)));
     }
 
     function setManager(address _manager) external isManager {
