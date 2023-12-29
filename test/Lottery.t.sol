@@ -72,21 +72,19 @@ contract LotteryTest is Test {
         emit LotteryCreated(1, maxTickets);
         // The event we get
         vm.prank(manager);
-        lottery.startLottery(randomHash, maxTickets);
+        lottery.startLottery();
 
         assertEq(lottery.getLotteryInfo(1).numOfTickets, 0);
-        assertEq(lottery.getLotteryInfo(1).maxNumOfTickets, maxTickets);
-        assertEq(lottery.getLotteryInfo(1).randomHash, randomHash);
     }
 
     function testFailUnauthotizedStart() public {
         vm.prank(user1);
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        lottery.startLottery();
     }
 
     function testBuyTicket(uint256 amount) public {
         vm.prank(manager);
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        lottery.startLottery();
         vm.deal(user1, 1 ether);
 
         vm.assume(amount > 0 && amount < 11);
@@ -104,14 +102,14 @@ contract LotteryTest is Test {
     }
 
     function testFailBuyTooManyTickets() public {
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        lottery.startLottery();
         vm.deal(user1, 1 ether);
         vm.prank(user1);
         lottery.buyTicket{value: 11 * 1}(11);
     }
 
     function testFailTooManyPlayers() public {
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 100);
+        lottery.startLottery();
         for(uint i = 0; i < 101; i++) {
             address player = vm.addr(i+1);
             vm.deal(player, 1 ether);
@@ -121,13 +119,13 @@ contract LotteryTest is Test {
     }
 
     function testFailBuyTicketsWithoutMoney() public {
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        lottery.startLottery();
         vm.prank(user1);
         lottery.buyTicket{value: 1 * 1}(1);
     }
 
     function testFailBuyTicketsFromContract() public {
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        lottery.startLottery();
         vm.deal(address(feeReceiver), 1 ether);
         vm.prank(address(feeReceiver));
         lottery.buyTicket{value: 1 * 1}(1);
@@ -135,7 +133,7 @@ contract LotteryTest is Test {
 
     function testPickWinnerBeforeClosed() public {
         vm.prank(manager);
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        lottery.startLottery();
         uint256 price = lottery.ticketPrice();
         for(uint i = 0; i < 10; i++) {
             address player = vm.addr(i+1);
@@ -147,13 +145,13 @@ contract LotteryTest is Test {
 
         vm.prank(manager);
         vm.expectRevert(bytes("Lottery is not closed"));
-        lottery.pickWinner("ciao");
+        lottery.pickWinner();
 
     }
 
     function testPickWinner() public {
         vm.prank(manager);
-        lottery.startLottery(keccak256(abi.encodePacked("ciao")), 10);
+        lottery.startLottery();
         uint256 snapshot = block.timestamp;
         uint256 price = lottery.ticketPrice();
         for(uint i = 0; i < 10; i++) {
@@ -168,7 +166,7 @@ contract LotteryTest is Test {
         snapshot = snapshot + lottery.lotteryPeriod() + 1;
         vm.warp(snapshot);
         vm.prank(manager);
-        lottery.pickWinner("ciao");
+        lottery.pickWinner();
 
         uint256 feeReceiverAfter = feeReceiver.balance;
         uint256 feeAmount = 10 ether * 20 / 100;
@@ -176,7 +174,7 @@ contract LotteryTest is Test {
         assertEq(lottery.lotteryId(), 2);
         assertEq(feeReceiverAfter, feeReceiverBefore + feeAmount);
         assertEq(lottery.getPlayers().length, 0);
-        assertEq(lottery.getLotteryWinnerById(1).balance, 8 ether);   
+        assertEq(lottery.getLotteryWinnerById(1).amount, 8 ether);   
 
         address player1 = vm.addr(12);
         vm.deal(player1, 1 ether);
@@ -186,32 +184,55 @@ contract LotteryTest is Test {
 
     }
 
-    function testCannotPickWinnerWithWrongSeed() public {
+    function testPickWinnerAndStartNew() public {
         vm.prank(manager);
-        lottery.startLottery(keccak256(abi.encodePacked("pippo")), 10);
+        lottery.startLottery();
         uint256 snapshot = block.timestamp;
+        uint256 price = lottery.ticketPrice();
         for(uint i = 0; i < 10; i++) {
             address player = vm.addr(i+1);
             vm.deal(player, 1 ether);
             vm.prank(player);
-            lottery.buyTicket{value: 1 ether}(1);
+            lottery.buyTicket{value: price}(1);
         }
+        assertEq(lottery.getLotteryInfo(1).numOfTickets, 10);
+        uint256 feeReceiverBefore = feeReceiver.balance;
+
         snapshot = snapshot + lottery.lotteryPeriod() + 1;
         vm.warp(snapshot);
         vm.prank(manager);
-        vm.expectRevert(bytes("Seed is not correct"));
-        lottery.pickWinner("ciao");
+        lottery.startNewLottery();
+
+        uint256 feeReceiverAfter = feeReceiver.balance;
+        uint256 feeAmount = 10 ether * 20 / 100;
+        assertEq(lottery.totalPayout(), 8 ether);
+        assertEq(lottery.lotteryId(), 2);
+        assertEq(feeReceiverAfter, feeReceiverBefore + feeAmount);
+        assertEq(lottery.getPlayers().length, 0);
+        assertEq(lottery.getLotteryWinnerById(1).amount, 8 ether);   
+
+        address player1 = vm.addr(12);
+        vm.deal(player1, 1 ether);
+        vm.prank(player1);
+        lottery.buyTicket{value: price}(1);
+        assertEq(lottery.getLotteryInfo(2).numOfTickets, 1);
+        snapshot = snapshot + lottery.lotteryPeriod() + 1;
+        vm.warp(snapshot);
+        vm.prank(manager);
+        lottery.pickWinner();
+        assertEq(lottery.totalPayout(), 8.8 ether);
+        assertEq(lottery.lotteryId(), 3);
     }
 
     function testCannotPickWinnerWithNoPlayers() public {
         vm.prank(manager);
-        lottery.startLottery(keccak256(abi.encodePacked("pippo")), 10);
+        lottery.startLottery();
         uint256 snapshot = block.timestamp;
         snapshot = snapshot + lottery.lotteryPeriod() + 1;
         vm.warp(snapshot);
         vm.expectRevert(bytes("No winner to pick"));
         vm.prank(manager);
-        lottery.pickWinner("ciao");
+        lottery.pickWinner();
     }
 
 }

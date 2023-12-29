@@ -17,8 +17,8 @@ contract Lottery is
     ReentrancyGuardUpgradeable 
 {
 
-    mapping(uint256 => address) public lotteryWinner;
     mapping(uint256 => LotteryInfo) public lotteryInfo;
+    mapping(uint256 => WinLotteryInfo) public lotteryWinInfo;
     
     mapping(address => bool) public isAdmin;
 
@@ -45,19 +45,23 @@ contract Lottery is
     struct LotteryInfo {
         uint256 price;
         uint256 numOfTickets;
-        uint256 maxNumOfTickets;
-        bytes32 randomHash;
         uint256 startTime;
         LotteryStatus status;
     }
 
+    struct WinLotteryInfo {
+        uint256 amount;
+        uint256 ticketNum;
+        uint256 timestamp;
+        address player;
+    }
 
     modifier isManager() {
         require(msg.sender == manager);
         _;
     }
 
-    event LotteryCreated(uint256 lotteryId, uint256 price, uint256 maxNumOfTickets);
+    event LotteryCreated(uint256 lotteryId, uint256 price);
     event TicketsBought(address player, uint256 numOfTicket);
     event WinnerPicked(uint256 lotteryId, address indexed winner, uint256 payout);
     event UpdateLotteryPeriod(uint256 oldPeriod, uint256 newPeriod);
@@ -78,7 +82,6 @@ contract Lottery is
         COORDINATOR = _cordinator;
         lotteryPeriod = 24 hours;
         test = 120;
-
         __Ownable_init();
         __UUPSUpgradeable_init();
     }
@@ -94,19 +97,28 @@ contract Lottery is
         require(success, "Address: unable to send value, recipient may have reverted");
     }
 
-    /// @notice Create a new lottery
-    /// @param randomHash The hash of a random string (you can use https://emn178.github.io/online-tools/keccak_256.html )
-    /// @param maxNumOfTickets The maximum number of tickets that can be bought
-    function startLottery(bytes32 randomHash, uint256 maxNumOfTickets) external {
+    /// @notice Create a new lottery at the first
+    function startLottery() external {
         require(isAdmin[msg.sender], "You are not authorized to start a lottery");
         require(lotteryInfo[lotteryId].numOfTickets == 0, "Lottery already started");
-        require(maxNumOfTickets > 0, "Max number of tickets must be greater than 0");
         require(ticketPrice > 0, "Ticket Price is not setted");
         require(feeRecipient != address(0), "Fee recipient must be setted");
-        require(randomHash != 0, "Winner hash must be set");
-        lotteryInfo[lotteryId] = LotteryInfo(ticketPrice, 0, maxNumOfTickets, randomHash, block.timestamp, LotteryStatus.OPENED);
-        emit LotteryCreated(lotteryId, ticketPrice, maxNumOfTickets);
+        lotteryInfo[lotteryId] = LotteryInfo(ticketPrice, 0, block.timestamp, LotteryStatus.OPENED);
+        emit LotteryCreated(lotteryId, ticketPrice);
     }
+
+    /// @notice Payout and start a new lottery
+    function startNewLottery() external {
+        require(isAdmin[msg.sender], "You are not authorized to start a lottery");
+        require(ticketPrice > 0, "Ticket Price is not setted");
+        require(feeRecipient != address(0), "Fee recipient must be setted");
+        if (lotteryInfo[lotteryId].numOfTickets != 0) {
+            pickWinner();
+        }
+        lotteryInfo[lotteryId] = LotteryInfo(ticketPrice, 0, block.timestamp, LotteryStatus.OPENED);
+        emit LotteryCreated(lotteryId, ticketPrice);
+    }
+
 
     /// @notice Buy tickets for the current lottery
     /// @param ticketsNumber The number of tickets to buy
@@ -116,10 +128,8 @@ contract Lottery is
             lotteryInfo[lotteryId].status == LotteryStatus.OPENED
             ,"Lottery is closed");
         require(msg.sender.code.length == 0, "Address must be a EOA");
-        require(lotteryInfo[lotteryId].maxNumOfTickets > 0, "Lottery not started");
         require(ticketsNumber > 0, "Number of tickets must be greater than 0");
         require(msg.value == lotteryInfo[lotteryId].price * ticketsNumber, "Ticket price not met");
-        require(lotteryInfo[lotteryId].maxNumOfTickets >= lotteryInfo[lotteryId].numOfTickets + ticketsNumber, "Too many tickets");
         lotteryInfo[lotteryId].numOfTickets += ticketsNumber;
         for(uint256 i; i < ticketsNumber; ){
             players.push(msg.sender);
@@ -128,31 +138,6 @@ contract Lottery is
             }
         }
         emit TicketsBought(msg.sender, ticketsNumber);
-    }
-
-    /// @notice Pick a winner for the current lottery
-    /// @param seed The random string used to compute the hash at the start
-    /// @dev VRF is is not necessary since the extraction is handled by the staff
-    function pickWinner(string calldata seed) external{
-        require(isAdmin[msg.sender] == true, "You are not admin");
-        require(
-            lotteryInfo[lotteryId].status == LotteryStatus.OPENED && 
-            lotteryInfo[lotteryId].startTime + lotteryPeriod < block.timestamp
-            , "Lottery is not closed");
-        require(lotteryInfo[lotteryId].numOfTickets > 0, "No winner to pick");
-        require(lotteryInfo[lotteryId].randomHash ==  keccak256(abi.encodePacked(seed)), "Seed is not correct");
-        require(lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets <= address(this).balance, "Missing funds");
-        uint256 winnerIndex = randomNumGenerator() % players.length;
-        uint256 payout = lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets;
-        uint256 feeAmount = payout * feePercentage / 10000;
-        lotteryWinner[lotteryId] = players[winnerIndex];
-        totalPayout += (payout - feeAmount);
-        players = new address[](0);
-        sendBNB(payable(lotteryWinner[lotteryId]), payout - feeAmount);
-        sendBNB(payable(feeRecipient), feeAmount);
-        lotteryInfo[lotteryId].status = LotteryStatus.CLOSED;
-        emit WinnerPicked(lotteryId, lotteryWinner[lotteryId], payout - feeAmount);
-        lotteryId++;
     }
 
     function createSubscriptionID() external isManager returns(uint64 subId) {
@@ -164,6 +149,29 @@ contract Lottery is
     function addConsumer() external isManager {
         VRFCoordinatorV2Interface(COORDINATOR).addConsumer(subscriptionId, consumer);
     }
+
+    /// @notice Pick a winner for the current lottery
+    function pickWinner() public {
+        require(isAdmin[msg.sender] == true, "You are not admin");
+        require(
+            lotteryInfo[lotteryId].status == LotteryStatus.OPENED && 
+            lotteryInfo[lotteryId].startTime + lotteryPeriod < block.timestamp
+            , "Lottery is not closed");
+        require(lotteryInfo[lotteryId].numOfTickets > 0, "No winner to pick");
+        require(lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets <= address(this).balance, "Missing funds");
+        uint256 winnerIndex = randomNumGenerator() % players.length;
+        uint256 payout = lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets;
+        uint256 feeAmount = payout * feePercentage / 10000;
+        totalPayout += (payout - feeAmount);
+        lotteryWinInfo[lotteryId] = WinLotteryInfo(totalPayout, winnerIndex, block.timestamp, players[winnerIndex]);
+        sendBNB(payable(players[winnerIndex]), payout - feeAmount);
+        sendBNB(payable(feeRecipient), feeAmount);
+        lotteryInfo[lotteryId].status = LotteryStatus.CLOSED;
+        emit WinnerPicked(lotteryId, players[winnerIndex], payout - feeAmount);
+        players = new address[](0);
+        lotteryId++;
+    }
+
 
     function randomNumGenerator() public returns (uint256) {
         require(consumer != address(0), "consumer is not setted");
@@ -214,6 +222,15 @@ contract Lottery is
         return players;
     }
 
+    function getWinLotteryList() external view returns(WinLotteryInfo[] memory) {
+        WinLotteryInfo[] memory result = new WinLotteryInfo[](lotteryId);
+        for (uint8 i = 0; i < lotteryId; i ++) {
+            result[i] = lotteryWinInfo[i];
+        }
+
+        return result;
+    }
+
     function getPlayerAtIndex(uint256 index) external view returns(address){
         return players[index];
     }
@@ -222,7 +239,8 @@ contract Lottery is
         return lotteryInfo[_lotteryId];
     }
 
-    function getLotteryWinnerById(uint256 _lotteryId) public view returns (address) {
-        return lotteryWinner[_lotteryId];
+    function getLotteryWinnerById(uint256 _lotteryId) public view returns (WinLotteryInfo memory) {
+        return lotteryWinInfo[_lotteryId];
     }
+
 }
