@@ -6,11 +6,18 @@ import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/pr
 import {UUPSUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/security/ReentrancyGuardUpgradeable.sol";
+// import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+// import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
+// import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {VRFCoordinatorV2Interface} from "lib/chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
 import {VRFv2Consumer} from "./VRFv2Consumer.sol";
 import {console} from "lib/forge-std/src/Script.sol";
 
-contract Lottery is 
+// contract Lottery is 
+//     Pausable, 
+//     ReentrancyGuard, 
+//     Ownable
+contract LotteryV2 is 
     Initializable , 
     UUPSUpgradeable, 
     OwnableUpgradeable,
@@ -67,13 +74,17 @@ contract Lottery is
         address _feeRecipient,
         address _cordinator  
     ) public initializer {
+    // constructor(
+    //     address _feeRecipient, 
+    //     address _cordinator
+    // ) Ownable(msg.sender) {
         isAdmin[msg.sender] = true;
         feeRecipient = _feeRecipient;
         lotteryId = 1;
         ticketPrice = 1000000000000000;
         feePercentage = 2000;
         COORDINATOR = _cordinator;
-        lotteryPeriod = 5 minutes;
+        lotteryPeriod = 3 minutes;
         test = 120;
         __Ownable_init();
         __UUPSUpgradeable_init();
@@ -259,12 +270,14 @@ contract Lottery is
         result = new uint256[](lotteryId);
 
         for(index = 0; index < lotteryId; index ++) {
-            amount[index] = playerAmount[_address][index];
-            if (lotteryWinInfo[index].player == _address) {
-                result[index] = 1;
-            } else {
-                result[index] = 0;
-            }
+            // if (playerAmount[_address][index] != 0) {
+                amount[index] = playerAmount[_address][index];
+                if (lotteryWinInfo[index].player == _address) {
+                    result[index] = 1;
+                } else {
+                    result[index] = 0;
+                }
+            // }
         }
 
         return (amount, result);

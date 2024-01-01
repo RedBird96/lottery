@@ -5,6 +5,7 @@ import {ERC1967Proxy} from "lib/openzeppelin-contracts/contracts/proxy/ERC1967/E
 import {UUPSUpgradeable} from "lib/openzeppelin-contracts/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Script, console} from "lib/forge-std/src/Script.sol";
 import {Lottery} from "../src/Lottery.sol";
+import {LotteryV2} from "../src/LotteryV2.sol";
 import {VRFv2Consumer} from "../src/VRFv2Consumer.sol";
 import {BaseDeployer} from "./BaseDeployer.s.sol";
 
@@ -54,19 +55,18 @@ contract LotteryScript is Script {
     }
     function _deployLottery() private broadcast(_deployerPrivateKey) {
         
-        // address implementation = address(new Lottery());
+        address implementation = address(new Lottery());
 
-        // bytes memory data = abi.encodeCall(
-        //     Lottery.__Lottery_init, 
-        //     (
-        //         address(fee), 
-        //         address(cordinator)
-        //     )
-        // );
-        // address proxy = address(new ERC1967Proxy(implementation, data));
+        bytes memory data = abi.encodeCall(
+            Lottery.__Lottery_init, 
+            (
+                address(fee), 
+                address(cordinator)
+            )
+        );
+        address proxy = address(new ERC1967Proxy(implementation, data));
 
-        // lottery = Lottery(proxy);
-        lottery = new Lottery(address(fee), address(cordinator));
+        lottery = Lottery(payable(proxy));
 
         uint64 subId = lottery.createSubscriptionID();
 
@@ -78,16 +78,11 @@ contract LotteryScript is Script {
     }
 
     function _upgradeLottery() private broadcast(_deployerPrivateKey) {
-        // address proxyAddress = 0xa11133a37378dfB3d6286c20b654D372b6E4d8D2;
-        // address implementation = address(new Lottery());
-        // bytes memory data = abi.encodeCall(
-        //     Lottery.__Lottery_init, 
-        //     (
-        //         address(fee),
-        //         address(cordinator)
-        //     )
-        // );
-        // UUPSUpgradeable proxy = UUPSUpgradeable(proxyAddress);
-        // proxy.upgradeToAndCall(implementation, data);
+        Lottery proxyAddress = Lottery(
+            payable(0x82bA75fe4e9ae2F52f5Fea5A11bF802B927003eA)
+        );
+        address implementation = address(new LotteryV2());
+        
+        proxyAddress.upgradeTo(implementation);
     }
 }

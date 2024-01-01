@@ -24,20 +24,20 @@ contract LotteryTest is Test {
         vm.createSelectFork("https://eth-sepolia.g.alchemy.com/v2/gugiiHEtV3akg3p4Y8y0kYFHT4Fe6nND", 4936679);
         vm.startPrank(manager);
 
-        // address implementation = address(new Lottery());
+        address implementation = address(new Lottery());
 
-        // bytes memory data = abi.encodeCall(
-        //     Lottery.__Lottery_init, 
-        //     (
-        //         address(feeReceiver), 
-        //         address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625)
-        //     )
-        // );
-        // address proxy = address(new ERC1967Proxy(implementation, data));
+        bytes memory data = abi.encodeCall(
+            Lottery.__Lottery_init, 
+            (
+                address(feeReceiver), 
+                address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625)
+            )
+        );
+        address proxy = address(new ERC1967Proxy(implementation, data));
 
-        // lottery = Lottery(proxy);
+        lottery = Lottery(payable(proxy));
 
-        lottery = new Lottery(address(feeReceiver), address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625));
+        // lottery = new Lottery(address(feeReceiver), address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625));
         uint64 subId = lottery.createSubscriptionID();
         consumer = new VRFv2Consumer(subId, address(0x8103B0A8A00be2DDC778e6e7eaa21791Cd364625), address(lottery));
         lottery.setVRFConsumer(address(consumer));
