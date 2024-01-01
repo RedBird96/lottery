@@ -2,31 +2,37 @@
 
 pragma solidity ^0.8.13;
 
-import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
-import {UUPSUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {OwnableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/security/ReentrancyGuardUpgradeable.sol";
+// import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
+// import {UUPSUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
+// import {OwnableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
+// import {ReentrancyGuardUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/security/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {VRFCoordinatorV2Interface} from "lib/chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
 import {VRFv2Consumer} from "./VRFv2Consumer.sol";
 import {console} from "lib/forge-std/src/Script.sol";
 
+// contract Lottery is 
+//     Initializable , 
+//     UUPSUpgradeable, 
+//     OwnableUpgradeable,
+//     ReentrancyGuardUpgradeable 
 contract Lottery is 
-    Initializable , 
-    UUPSUpgradeable, 
-    OwnableUpgradeable,
-    ReentrancyGuardUpgradeable 
+    Pausable, 
+    ReentrancyGuard, 
+    Ownable
 {
 
     mapping(uint256 => LotteryInfo) public lotteryInfo;
     mapping(uint256 => WinLotteryInfo) public lotteryWinInfo;
     
     mapping(address => bool) public isAdmin;
-
+    mapping(address => mapping(uint256 => uint256)) public playerAmount;
 
     address[] public players;
 
     address public feeRecipient;
-    address public manager;
     uint256 public lotteryId;
     uint256 public totalPayout;
     uint256 public lotteryPeriod;
@@ -56,11 +62,6 @@ contract Lottery is
         address player;
     }
 
-    modifier isManager() {
-        require(msg.sender == manager);
-        _;
-    }
-
     event LotteryCreated(uint256 lotteryId, uint256 price);
     event TicketsBought(address player, uint256 numOfTicket);
     event WinnerPicked(uint256 lotteryId, address indexed winner, uint256 payout);
@@ -69,26 +70,39 @@ contract Lottery is
     event UpdateFeePercentage(uint256 oldPercentage, uint256 newPercentage);
     event CreateSubId(uint64 id);
 
-    function __Lottery_init(
-        address _feeRecipient,
-        address _cordinator  
-    ) public initializer {
+    // function __Lottery_init(
+    //     address _feeRecipient,
+    //     address _cordinator  
+    // ) public initializer {
+    constructor(
+        address _feeRecipient, 
+        address _cordinator
+    ) Ownable(msg.sender) {
         isAdmin[msg.sender] = true;
-        manager = msg.sender;
         feeRecipient = _feeRecipient;
         lotteryId = 1;
-        ticketPrice = 1000000000000000000;
+        ticketPrice = 1000000000000000;
         feePercentage = 2000;
         COORDINATOR = _cordinator;
-        lotteryPeriod = 24 hours;
+        lotteryPeriod = 5 minutes;
         test = 120;
-        __Ownable_init();
-        __UUPSUpgradeable_init();
+        // __Ownable_init();
+        // __UUPSUpgradeable_init();
     }
 
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
+    // function _authorizeUpgrade(
+    //     address newImplementation
+    // ) internal override onlyOwner {}
+
+    // Pause the contract to prevent certain functionalities
+    function pause() public onlyOwner {
+        _pause();
+    }
+
+    // Unpause the contract to re-enable functionalities
+    function unpause() public onlyOwner {
+        _unpause();
+    }
 
     function sendBNB(address payable recipient, uint256 amount) internal {
         require(address(this).balance >= amount, "Address: insufficient balance");
@@ -108,7 +122,7 @@ contract Lottery is
     }
 
     /// @notice Payout and start a new lottery
-    function startNewLottery() external {
+    function startNewLottery() external whenNotPaused {
         require(isAdmin[msg.sender], "You are not authorized to start a lottery");
         require(ticketPrice > 0, "Ticket Price is not setted");
         require(feeRecipient != address(0), "Fee recipient must be setted");
@@ -137,16 +151,17 @@ contract Lottery is
                 ++i;
             }
         }
+        playerAmount[msg.sender][lotteryId] += msg.value;
         emit TicketsBought(msg.sender, ticketsNumber);
     }
 
-    function createSubscriptionID() external isManager returns(uint64 subId) {
+    function createSubscriptionID() external onlyOwner returns(uint64 subId) {
         subId = VRFCoordinatorV2Interface(COORDINATOR).createSubscription();
         subscriptionId = subId;
         emit CreateSubId(subId);
     }
 
-    function addConsumer() external isManager {
+    function addConsumer() external onlyOwner {
         VRFCoordinatorV2Interface(COORDINATOR).addConsumer(subscriptionId, consumer);
     }
 
@@ -157,13 +172,13 @@ contract Lottery is
             lotteryInfo[lotteryId].status == LotteryStatus.OPENED && 
             lotteryInfo[lotteryId].startTime + lotteryPeriod < block.timestamp
             , "Lottery is not closed");
-        require(lotteryInfo[lotteryId].numOfTickets > 0, "No winner to pick");
+        //require(lotteryInfo[lotteryId].numOfTickets > 0, "No winner to pick");
         require(lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets <= address(this).balance, "Missing funds");
         uint256 winnerIndex = randomNumGenerator() % players.length;
         uint256 payout = lotteryInfo[lotteryId].price * lotteryInfo[lotteryId].numOfTickets;
         uint256 feeAmount = payout * feePercentage / 10000;
         totalPayout += (payout - feeAmount);
-        lotteryWinInfo[lotteryId] = WinLotteryInfo(totalPayout, winnerIndex, block.timestamp, players[winnerIndex]);
+        lotteryWinInfo[lotteryId] = WinLotteryInfo(totalPayout, winnerIndex + 1, block.timestamp, players[winnerIndex]);
         sendBNB(payable(players[winnerIndex]), payout - feeAmount);
         sendBNB(payable(feeRecipient), feeAmount);
         lotteryInfo[lotteryId].status = LotteryStatus.CLOSED;
@@ -191,31 +206,32 @@ contract Lottery is
         return randomWords[0];
     }
 
-    function setManager(address _manager) external isManager {
-        manager = _manager;
-    }
-
-    function setLotteryPeriod(uint256 newtime) external isManager {
+    function setLotteryPeriod(uint256 newtime) external onlyOwner {
         emit UpdateLotteryPeriod(lotteryPeriod, newtime);
         lotteryPeriod = newtime;
     }
 
-    function setAdmin(address _admin, bool _isAdmin) external isManager {
+    function setAdmin(address _admin, bool _isAdmin) external onlyOwner {
         isAdmin[_admin] = _isAdmin;
     }
 
-    function setTickeyPrice(uint256 _price) external isManager {
+    function setTicketPrice(uint256 _price) external onlyOwner {
         emit UpdateTicketPrice(ticketPrice, _price);
         ticketPrice = _price;
     }
 
-    function setFeePercentage(uint256 _newPercentage) external isManager {
+    function setFeePercentage(uint256 _newPercentage) external onlyOwner {
         emit UpdateFeePercentage(feePercentage, _newPercentage);
         feePercentage = _newPercentage;
     }
 
-    function setVRFConsumer(address _consumer) external isManager {
+    function setVRFConsumer(address _consumer) external onlyOwner {
         consumer = _consumer;
+    }
+
+    function withdraw(address _receiver) external onlyOwner {
+        uint256 amount = address(this).balance;
+        sendBNB(payable(_receiver), amount);
     }
 
     function getPlayers() external view returns(address[] memory){
@@ -243,4 +259,29 @@ contract Lottery is
         return lotteryWinInfo[_lotteryId];
     }
 
+    function getPlayerHistory(address _address) 
+        public 
+        view 
+        returns (uint256[] memory amount, uint256[] memory result) 
+    {
+        uint8 index = 0;
+        amount = new uint256[](lotteryId);
+        result = new uint256[](lotteryId);
+
+        for(index = 0; index < lotteryId; index ++) {
+            // if (playerAmount[_address][index] != 0) {
+                amount[index] = playerAmount[_address][index];
+                if (lotteryWinInfo[index].player == _address) {
+                    result[index] = 1;
+                } else {
+                    result[index] = 0;
+                }
+            // }
+        }
+
+        return (amount, result);
+    }
+
+    receive() external payable {
+    }
 }

@@ -27,7 +27,6 @@ contract LotteryScript is Script {
     }
 
     function setUp() public {
-
         fee = address(0x2ef73f60F33b167dC018C6B1DCC957F4e4c7e936);
     }
 
@@ -55,18 +54,19 @@ contract LotteryScript is Script {
     }
     function _deployLottery() private broadcast(_deployerPrivateKey) {
         
-        address implementation = address(new Lottery());
+        // address implementation = address(new Lottery());
 
-        bytes memory data = abi.encodeCall(
-            Lottery.__Lottery_init, 
-            (
-                address(fee), 
-                address(cordinator)
-            )
-        );
-        address proxy = address(new ERC1967Proxy(implementation, data));
+        // bytes memory data = abi.encodeCall(
+        //     Lottery.__Lottery_init, 
+        //     (
+        //         address(fee), 
+        //         address(cordinator)
+        //     )
+        // );
+        // address proxy = address(new ERC1967Proxy(implementation, data));
 
-        lottery = Lottery(proxy);
+        // lottery = Lottery(proxy);
+        lottery = new Lottery(address(fee), address(cordinator));
 
         uint64 subId = lottery.createSubscriptionID();
 
@@ -78,16 +78,16 @@ contract LotteryScript is Script {
     }
 
     function _upgradeLottery() private broadcast(_deployerPrivateKey) {
-        address proxyAddress = 0xa11133a37378dfB3d6286c20b654D372b6E4d8D2;
-        address implementation = address(new Lottery());
-        bytes memory data = abi.encodeCall(
-            Lottery.__Lottery_init, 
-            (
-                address(fee),
-                address(cordinator)
-            )
-        );
-        UUPSUpgradeable proxy = UUPSUpgradeable(proxyAddress);
-        proxy.upgradeToAndCall(implementation, data);
+        // address proxyAddress = 0xa11133a37378dfB3d6286c20b654D372b6E4d8D2;
+        // address implementation = address(new Lottery());
+        // bytes memory data = abi.encodeCall(
+        //     Lottery.__Lottery_init, 
+        //     (
+        //         address(fee),
+        //         address(cordinator)
+        //     )
+        // );
+        // UUPSUpgradeable proxy = UUPSUpgradeable(proxyAddress);
+        // proxy.upgradeToAndCall(implementation, data);
     }
 }
