@@ -2,19 +2,17 @@
 
 pragma solidity ^0.8.13;
 
-import {Initializable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
-import {UUPSUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {OwnableUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
-import {ReentrancyGuardUpgradeable} from "lib/openzeppelin-contracts-upgradeable/contracts/security/ReentrancyGuardUpgradeable.sol";
+import {ReentrancyGuard} from "lib/openzeppelin-contracts/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "lib/openzeppelin-contracts/contracts/utils/Pausable.sol";
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import {VRFCoordinatorV2Interface} from "lib/chainlink/contracts/src/v0.8/vrf/interfaces/VRFCoordinatorV2Interface.sol";
 import {VRFv2Consumer} from "./VRFv2Consumer.sol";
 import {console} from "lib/forge-std/src/Script.sol";
 
 contract Lottery is 
-    Initializable , 
-    UUPSUpgradeable, 
-    OwnableUpgradeable,
-    ReentrancyGuardUpgradeable 
+    Pausable, 
+    ReentrancyGuard, 
+    Ownable
 {
 
     mapping(uint256 => LotteryInfo) public lotteryInfo;
@@ -63,10 +61,10 @@ contract Lottery is
     event UpdateFeePercentage(uint256 oldPercentage, uint256 newPercentage);
     event CreateSubId(uint64 id);
 
-    function __Lottery_init(
-        address _feeRecipient,
-        address _cordinator  
-    ) public initializer {
+    constructor(
+        address _feeRecipient, 
+        address _cordinator
+    ) Ownable(msg.sender) {
         isAdmin[msg.sender] = true;
         feeRecipient = _feeRecipient;
         lotteryId = 1;
@@ -75,23 +73,17 @@ contract Lottery is
         COORDINATOR = _cordinator;
         lotteryPeriod = 5 minutes;
         test = 120;
-        __Ownable_init();
-        __UUPSUpgradeable_init();
     }
 
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
+    // Pause the contract to prevent certain functionalities
+    function pause() public onlyOwner {
+        _pause();
+    }
 
-    // // Pause the contract to prevent certain functionalities
-    // function pause() public onlyOwner {
-    //     _pause();
-    // }
-
-    // // Unpause the contract to re-enable functionalities
-    // function unpause() public onlyOwner {
-    //     _unpause();
-    // }
+    // Unpause the contract to re-enable functionalities
+    function unpause() public onlyOwner {
+        _unpause();
+    }
 
     function sendBNB(address payable recipient, uint256 amount) internal {
         require(address(this).balance >= amount, "Address: insufficient balance");
@@ -100,8 +92,10 @@ contract Lottery is
         require(success, "Address: unable to send value, recipient may have reverted");
     }
 
-    /// @notice Create a new lottery at the first
-    function startLottery() external {
+    /**
+     * @notice start new lottery without pick winner
+     */
+    function startLottery() external whenNotPaused {
         require(isAdmin[msg.sender], "You are not authorized to start a lottery");
         require(lotteryInfo[lotteryId].numOfTickets == 0, "Lottery already started");
         require(ticketPrice > 0, "Ticket Price is not setted");
@@ -110,8 +104,10 @@ contract Lottery is
         emit LotteryCreated(lotteryId, ticketPrice);
     }
 
-    /// @notice Payout and start a new lottery
-    function startNewLottery() external {
+    /**
+     * @notice start new lottery after pick winner
+     */
+    function startNewLottery() external whenNotPaused {
         require(isAdmin[msg.sender], "You are not authorized to start a lottery");
         require(ticketPrice > 0, "Ticket Price is not setted");
         require(feeRecipient != address(0), "Fee recipient must be setted");
@@ -123,8 +119,10 @@ contract Lottery is
     }
 
 
-    /// @notice Buy tickets for the current lottery
-    /// @param ticketsNumber The number of tickets to buy
+    /**
+     * @notice Buy tickets for the current lottery
+     * @param ticketsNumber the number of tickets to buy
+     */
     function buyTicket(uint256 ticketsNumber) external payable {
         require(
             lotteryInfo[lotteryId].startTime + lotteryPeriod > block.timestamp && 
@@ -144,17 +142,25 @@ contract Lottery is
         emit TicketsBought(msg.sender, ticketsNumber);
     }
 
+    /**
+     * @notice create subscription ID for making consumer object
+     */
     function createSubscriptionID() external onlyOwner returns(uint64 subId) {
         subId = VRFCoordinatorV2Interface(COORDINATOR).createSubscription();
         subscriptionId = subId;
         emit CreateSubId(subId);
     }
 
+    /**
+     * @notice add consumer contract
+     */
     function addConsumer() external onlyOwner {
         VRFCoordinatorV2Interface(COORDINATOR).addConsumer(subscriptionId, consumer);
     }
 
-    /// @notice Pick a winner for the current lottery
+    /**
+     * @notice pick winner for current lottery
+     */
     function pickWinner() public {
         require(isAdmin[msg.sender] == true, "You are not admin");
         require(
@@ -177,13 +183,17 @@ contract Lottery is
         lotteryId++;
     }
 
-
+    /**
+     * @notice generator random number
+     */
     function randomNumGenerator() public returns (uint256) {
         require(consumer != address(0), "consumer is not setted");
         return VRFv2Consumer(consumer).requestRandomWords();
     }
 
-    // This functions returns the random number given to us by chainlink
+    /**
+     * @notice genetrator random string
+     */
     function randomWordGenerator() public view returns (uint256) {
         //    uint256 requestID = getRequestId();
         uint256 requestID = VRFv2Consumer(consumer).lastRequestId();
@@ -196,38 +206,63 @@ contract Lottery is
         return randomWords[0];
     }
 
+    /**
+     * @notice set lottery period
+     */
     function setLotteryPeriod(uint256 newtime) external onlyOwner {
         emit UpdateLotteryPeriod(lotteryPeriod, newtime);
         lotteryPeriod = newtime;
     }
 
+    /**
+     * @notice set admin permission
+     */
     function setAdmin(address _admin, bool _isAdmin) external onlyOwner {
         isAdmin[_admin] = _isAdmin;
     }
 
+    /**
+     * @notice set ticket price
+     */
     function setTicketPrice(uint256 _price) external onlyOwner {
         emit UpdateTicketPrice(ticketPrice, _price);
         ticketPrice = _price;
     }
 
+    /**
+     * @notice set fee percentage for the lottery
+     */
     function setFeePercentage(uint256 _newPercentage) external onlyOwner {
         emit UpdateFeePercentage(feePercentage, _newPercentage);
         feePercentage = _newPercentage;
     }
 
+    /**
+     * @notice set vrf consumer for get chainlink random
+     */
     function setVRFConsumer(address _consumer) external onlyOwner {
         consumer = _consumer;
     }
 
+    /**
+     * @notice withdraw assets to receive
+     * @param _receiver the receiver address
+     */
     function withdraw(address _receiver) external onlyOwner {
         uint256 amount = address(this).balance;
         sendBNB(payable(_receiver), amount);
     }
 
+    /**
+     * @notice return players info
+     */
     function getPlayers() external view returns(address[] memory){
         return players;
     }
 
+    /**
+     * @notice return past lottery info
+     */
     function getWinLotteryList() external view returns(WinLotteryInfo[] memory) {
         WinLotteryInfo[] memory result = new WinLotteryInfo[](lotteryId);
         for (uint8 i = 0; i < lotteryId; i ++) {
@@ -237,18 +272,30 @@ contract Lottery is
         return result;
     }
 
+    /**
+     * @notice get player by index
+     */
     function getPlayerAtIndex(uint256 index) external view returns(address){
         return players[index];
     }
 
+    /**
+     * @notice get lottery by index
+     */
     function getLotteryInfo(uint256 _lotteryId) external view returns (LotteryInfo memory) {
         return lotteryInfo[_lotteryId];
     }
 
+    /**
+     * @notice get past lottery by index
+     */
     function getLotteryWinnerById(uint256 _lotteryId) public view returns (WinLotteryInfo memory) {
         return lotteryWinInfo[_lotteryId];
     }
 
+    /**
+     * @notice get player history by address
+     */
     function getPlayerHistory(address _address) 
         public 
         view 

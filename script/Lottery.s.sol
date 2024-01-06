@@ -6,6 +6,7 @@ import {UUPSUpgradeable} from "lib/openzeppelin-contracts/contracts/proxy/utils/
 import {Script, console} from "lib/forge-std/src/Script.sol";
 import {Lottery} from "../src/Lottery.sol";
 import {LotteryV2} from "../src/LotteryV2.sol";
+import {LotteryV3} from "../src/LotteryV3.sol";
 import {VRFv2Consumer} from "../src/VRFv2Consumer.sol";
 import {BaseDeployer} from "./BaseDeployer.s.sol";
 
@@ -55,18 +56,21 @@ contract LotteryScript is Script {
     }
     function _deployLottery() private broadcast(_deployerPrivateKey) {
         
-        address implementation = address(new Lottery());
+        // address implementation = address(new Lottery());
 
-        bytes memory data = abi.encodeCall(
-            Lottery.__Lottery_init, 
-            (
-                address(fee), 
-                address(cordinator)
-            )
+        // bytes memory data = abi.encodeCall(
+        //     Lottery.__Lottery_init, 
+        //     (
+        //         address(fee), 
+        //         address(cordinator)
+        //     )
+        // );
+        // address proxy = address(new ERC1967Proxy(implementation, data));
+
+        lottery = new Lottery(
+            address(fee), 
+            address(cordinator)
         );
-        address proxy = address(new ERC1967Proxy(implementation, data));
-
-        lottery = Lottery(payable(proxy));
 
         uint64 subId = lottery.createSubscriptionID();
 
@@ -78,10 +82,10 @@ contract LotteryScript is Script {
     }
 
     function _upgradeLottery() private broadcast(_deployerPrivateKey) {
-        Lottery proxyAddress = Lottery(
-            payable(0x82bA75fe4e9ae2F52f5Fea5A11bF802B927003eA)
+        LotteryV2 proxyAddress = LotteryV2(
+            payable(0x95e4FC383Bf5cdB0ebA155613EC487589cc5cD72)
         );
-        address implementation = address(new LotteryV2());
+        address implementation = address(new LotteryV3());
         
         proxyAddress.upgradeTo(implementation);
     }
