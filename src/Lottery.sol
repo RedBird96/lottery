@@ -22,6 +22,7 @@ contract Lottery is
     mapping(address => mapping(uint256 => uint256)) public playerAmount;
 
     address[] public players;
+    address public test;
 
     address public feeRecipient;
     uint256 public lotteryId;
